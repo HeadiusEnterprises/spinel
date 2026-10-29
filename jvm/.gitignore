@@ -1,0 +1,5 @@
+/.bundle/
+/.rubocop_cache/
+/vendor/
+*.class
+*.jar

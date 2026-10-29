@@ -1,0 +1,58 @@
+#!/usr/bin/env jruby
+# frozen_string_literal: true
+
+# Compile Ruby source or exported Spinel IR into a standalone JVM application JAR.
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "optparse"
+require "open3"
+require "tempfile"
+require "spinel/jvm/compiler"
+
+# Collect frontend search roots and Java target/classpath settings from the command line.
+output = nil
+spinel = File.expand_path("../../bin/spinel", __dir__)
+classpath = []
+frontend_args = []
+release = 17
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: spinel-jvm INPUT.rb -o OUTPUT.jar"
+  opts.on("-o", "--output FILE", "Output executable JAR") { |value| output = value }
+  opts.on("--spinel FILE", "Spinel frontend binary") { |value| spinel = value }
+  opts.on("-I DIR", "Add a Spinel feature search root") do |value|
+    frontend_args.push("-I", value)
+  end
+  opts.on("--require-gate", "Reject unresolved Spinel requires") do
+    frontend_args << "--require-gate"
+  end
+  opts.on("-cp", "--class-path PATH", "Java compilation/runtime classpath") do |value|
+    classpath.concat(value.split(File::PATH_SEPARATOR))
+  end
+  opts.on("--class-path-entry PATH", "Add one Java classpath entry") do |value|
+    classpath << value
+  end
+  opts.on("--release VERSION", Integer, "Java class-file/API release (currently 17)") do |value|
+    release = value
+  end
+end
+parser.parse!
+input = ARGV.shift
+abort parser.to_s unless input && output && ARGV.empty?
+
+# Consume existing IR directly, or export temporary IR through the native frontend.
+if input.end_with?(".spir.json")
+  ir = Spinel::JVM::IR.load(input)
+  Spinel::JVM::Compiler.new(ir, classpath: classpath, release: release).compile(output)
+else
+  Tempfile.create(["spinel-jvm-", ".spir.json"]) do |file|
+    file.close
+    _stdout, stderr, status = Open3.capture3(
+      spinel, *frontend_args, input, "--emit-backend-ir", "-o", file.path
+    )
+    abort stderr unless status.success?
+    ir = Spinel::JVM::IR.load(file.path)
+    Spinel::JVM::Compiler.new(ir, classpath: classpath, release: release).compile(output)
+  end
+end
+warn "Wrote #{output}"

@@ -136,6 +136,62 @@ unsatisfiable `require` is a compile error naming the missing package, and
 stdlib features need their `require` just like CRuby (`spin` compiles with
 the require gate on; see [require.md](require.md)).
 
+### JVM applications and Java classpaths
+
+A project can select the JVM backend and declare local JARs or class
+directories. Paths are relative to the manifest that declares them; entries
+from resolved dependencies are accumulated transitively.
+
+```toml
+[build]
+backend = "jvm"
+
+[jvm]
+release = 17
+jars = ["vendor/acme-client.jar"]
+class_dirs = ["build/java/classes"]
+```
+
+`spin build` writes `build/jvm/<name>.jar`, and `spin run` supplies that JAR
+and every resolved Java entry to `java -cp`. The backend can also be selected
+for one invocation with `--backend jvm`; `spin flags --backend jvm` prints the
+equivalent `spinel-jvm` arguments.
+
+Java interop remains compile-time and closed-world. Imports follow JRuby's
+class-import forms and may contain more than one class:
+
+```ruby
+require "java"
+java_import "com.acme.Client", java.util.ArrayList
+
+client = Client.new
+puts client.name
+```
+
+The JVM backend resolves public constructors, static methods, and instance
+methods, and propagates exact Java reference types through locals and chained
+calls. Inferred types select normal overloads. JRuby-compatible
+`receiver.java_send(:name, [JavaType, ...], args...)` selects an exact public
+method when inference is ambiguous; `receiver.java_send(:name)` selects an
+exact zero-argument method. `java_signature "return_type name(parameter_types)"`
+applies an exported JVM name and descriptor to the immediately following
+Spinel method; Java visibility and `throws` clauses are retained.
+
+Java superclass extension uses `class Child < ImportedClass`, with an
+accessible no-argument Java parent constructor. Interface implementation uses
+`include ImportedInterface`. A unique inherited descriptor supplies override
+types; overloaded overrides require `java_signature`.
+
+`java_package "com.example"` places the compilation's generated types in a
+Java package. Marked modules (`java_interface`, `java_abstract`) define Java
+interfaces and signed default methods. `Data.define` with `java_record`
+component types defines a JVM record; classes with `java_enum` define simple
+Java enums. These are compile-time Ruby calls rather than new syntax. They
+use the same `spin build`/`spin run` commands and classpath configuration.
+See [the JVM backend documentation](../jvm/README.md) for examples and the
+current restrictions. Boxing/varargs, import-renaming blocks, generic
+metadata, and annotated/static Java signatures remain future work.
+
 ### The index
 
 A bare `name = "constraint"` dependency is looked up in the index — a git

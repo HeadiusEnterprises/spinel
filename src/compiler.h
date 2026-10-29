@@ -21,6 +21,8 @@ extern int g_require_gate;
 void sp_feature_mark(const char *name);
 int sp_feature_enabled(const char *name);
 int        sp_feature_required(const char *name); /* require was actually written (gate-independent) */
+int sp_feature_count(void);
+const char *sp_feature_name(int index);
 /* Add a `-I <dir>` feature search root (see resolve_plain_requires). */
 void sp_add_feature_root(const char *dir);
 

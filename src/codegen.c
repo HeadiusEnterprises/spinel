@@ -1,4 +1,5 @@
 #include "codegen_internal.h"
+#include "backend_ir.h"
 
 /* A reference-backed builtin (IO/Fiber/Thread/Queue/Mutex/ConditionVariable/
    Enumerator/Exception/Proc/Method) is a genuinely nilable C pointer: an unset
@@ -9301,6 +9302,7 @@ static void ext_generate_cruby_shim(Compiler *c) {
 
 
 char *codegen_program(const NodeTable *nt) {
+  char *backend_syntax = getenv("SPINEL_EMIT_BACKEND_IR") ? backend_syntax_json(nt) : NULL;
   Compiler *c = comp_new(nt);
   analyze_program(c);
   /* From here on a yield reads the type of the block spliced at THIS site,
@@ -9336,6 +9338,24 @@ char *codegen_program(const NodeTable *nt) {
     char *json = build_symbol_map_json(c);
     emit_write_file(psym_out, json);
     free(json);
+  }
+  const char *backend_ir_out = getenv("SPINEL_EMIT_BACKEND_IR");
+  if (backend_ir_out && *backend_ir_out) {
+    char *json = backend_ir_json(c);
+    size_t len = strlen(json);
+    while (len && (json[len - 1] == '\n' || json[len - 1] == ' ')) len--;
+    if (backend_syntax && len && json[len - 1] == '}') {
+      char *combined = malloc(len + strlen(backend_syntax) + 16);
+      memcpy(combined, json, len - 1);
+      sprintf(combined + len - 1, ",\"syntax\":%s}\n", backend_syntax);
+      free(json);
+      json = combined;
+    }
+    free(backend_syntax);
+    emit_write_file(backend_ir_out, json);
+    free(json);
+    comp_free(c);
+    return strdup("");
   }
   const char *sym_out = getenv("SPINEL_EMIT_SYMBOL_MAP");
   if (sym_out && *sym_out) {
@@ -10826,4 +10846,3 @@ char *codegen_program(const NodeTable *nt) {
   comp_free(c);
   return b.p;
 }
-

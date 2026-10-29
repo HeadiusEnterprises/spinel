@@ -1,0 +1,75 @@
+AllCops:
+  TargetRubyVersion: 3.4
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    # Compiler inputs deliberately exercise nonstandard and mutable Ruby forms.
+    - test/fixtures/**/*
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+# Describe every method, including private bytecode and inference helpers.
+Style/DocumentationMethod:
+  Enabled: true
+  RequireForNonPublicMethods: true
+  Exclude: []
+
+Layout/LineLength:
+  Max: 120
+
+Naming/RescuedExceptionsVariableName:
+  PreferredName: error
+
+# Bytecode visitors are table-shaped; keep their cases together.
+Metrics/AbcSize:
+  Max: 80
+  AllowedMethods:
+    - emit_expression
+
+Metrics/MethodLength:
+  Max: 60
+  CountAsOne: [array, hash, heredoc]
+  AllowedMethods:
+    - emit_expression
+
+Metrics/CyclomaticComplexity:
+  Max: 25
+  AllowedMethods:
+    - emit_expression
+
+Metrics/PerceivedComplexity:
+  Max: 30
+  AllowedMethods:
+    - emit_expression
+
+Metrics/ClassLength:
+  Max: 800
+  CountAsOne: [array, hash, heredoc]
+
+Metrics/ModuleLength:
+  Max: 650
+  CountAsOne: [array, hash, heredoc]
+
+Metrics/BlockLength:
+  Max: 40
+  Exclude:
+    - test/**/*
+
+# A Java Class describes its ABI shape using these predicate names.
+Naming/PredicateMethod:
+  AllowedMethods: [primitive?, array?]
+
+# JVM opcode spellings, such as iconst_1, are part of BiteScript's API.
+Naming/VariableNumber:
+  AllowedIdentifiers: [iconst_0, iconst_1]
+
+# This shim intentionally reopens BiteScript and mirrors Module#constants.
+Style/OneClassPerFile:
+  Exclude: [lib/spinel/jvm/bitescript.rb]
+
+Style/OptionalBooleanParameter:
+  AllowedMethods: [constants]

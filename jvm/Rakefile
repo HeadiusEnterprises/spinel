@@ -1,0 +1,66 @@
+# frozen_string_literal: true
+
+# Lint, regression, and benchmark tasks for the JVM compiler prototype.
+
+desc "Check compiler and test Ruby style (run with CRuby)"
+task :lint do
+  sh "rubocop", "--config", ".rubocop.yml", "."
+end
+
+desc "Verify the JRuby/BiteScript bytecode toolchain"
+task :smoke do
+  ruby "test/bitescript_smoke_test.rb"
+end
+
+desc "Verify the versioned analyzed-IR boundary"
+task :ir do
+  ruby "test/backend_ir_test.rb"
+end
+
+desc "Compile a scalar Spinel program from IR to an executable JAR"
+task :scalar do
+  ruby "test/scalar_compile_test.rb"
+end
+
+desc "Compile Spinel objects, fields, and instance methods to an executable JAR"
+task :object do
+  ruby "test/object_compile_test.rb"
+end
+
+desc "Verify inherited construction and virtual override dispatch"
+task :inheritance do
+  ruby "test/inheritance_compile_test.rb"
+end
+
+desc "Verify core collections, strings, closures, control flow, and concurrency"
+task :core do
+  ruby "test/core_compile_test.rb"
+end
+
+desc "Compile every checked-in benchmark to JVM bytecode"
+task :benchmark_compile do
+  ruby "benchmark_audit.rb"
+end
+
+desc "Run every benchmark with JVM verification and compare exact stdout"
+task :benchmarks do
+  ruby "benchmark_audit.rb", "--run"
+end
+
+desc "Compile direct calls to imported Java classes on an external classpath"
+task :java do
+  ruby "test/java_integration_test.rb"
+end
+
+desc "Verify Java callers of Spinel interfaces, records, enums, and subclasses"
+task :java_types do
+  ruby "test/java_types_test.rb"
+end
+
+desc "Build a JVM application through spin.toml and spin"
+task :spin do
+  ruby "test/spin_integration_test.rb"
+end
+
+# Run semantic regressions and benchmark compilation; benchmark execution remains opt-in.
+task default: %i[smoke ir scalar object inheritance core java java_types spin benchmark_compile]

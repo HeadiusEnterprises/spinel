@@ -1933,6 +1933,12 @@ int sp_feature_enabled(const char *name) {
   return 0;
 }
 
+int sp_feature_count(void) { return sp_req_feats_n; }
+
+const char *sp_feature_name(int index) {
+  return index >= 0 && index < sp_req_feats_n ? sp_req_feats[index] : NULL;
+}
+
 /* Like sp_feature_enabled, but the require is mandatory REGARDLESS of the
    require-gate mode: true only when the program actually `require`d the
    feature. For stdlib whose classes CRuby only defines after the require
@@ -2478,7 +2484,7 @@ static int sp_require_tolerated(const char *name) {
      "rational" / "complex": both classes are built in, so the require has
      nothing to load and nothing to warn about -- CRuby satisfies them
      silently for the same reason (#3455). */
-  static const char *const tolerated[] = { "thread", "enumerator", "fiber", "ffi",
+  static const char *const tolerated[] = { "thread", "enumerator", "fiber", "ffi", "java",
                                            "rational", "complex", NULL };
   for (int i = 0; tolerated[i]; i++) {
     if (strcmp(name, tolerated[i]) == 0) return 1;
@@ -2649,6 +2655,9 @@ else if (sp_require_tolerated(lib_name)) {
           /* A core capability Spinel provides without a file (Thread,
              Enumerator, Fiber, the ffi DSL); the require is a harmless
              no-op, like modern CRuby -- gate or no gate. */
+          /* The JVM backend needs this boundary even without java_import
+             (for example, implicit java.lang names and qualified classes). */
+          if (strcmp(lib_name, "java") == 0) sp_feature_mark(lib_name);
           content = strdup("# require no-op (core feature)");
           req_val = "false";   /* already there: nothing was loaded */
         }

@@ -1,0 +1,15 @@
+# frozen_string_literal: true
+
+# Compiler dependencies and MRI-only tools for auditing the JVM prototype.
+
+source "https://rubygems.org"
+
+gem "bitescript", "0.1.4"
+gem "rake", "~> 13.0"
+
+# Keep style tooling out of JRuby compilation; run lint under chruby-selected CRuby.
+group :lint do
+  platforms :mri do
+    gem "rubocop", "~> 1.92.0", require: false
+  end
+end

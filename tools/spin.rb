@@ -69,10 +69,10 @@ usage: spin <command> [args]
   search [term]        find packages in the index (name, latest, repo)
   remove <name>        drop a dependency + relock
   lock | fetch | vendor  resolve deps / warm the cache / copy into vendor/
-  build [target..]     build bin/ executables into build/bin/
+  build [target..]     build bin/ executables (`--backend native|jvm`)
                        (--debug / -g: debuggable -O0 build for lldb/gdb;
                         also SPIN_DEBUG=1; applies to build/run/test)
-  run [target] [-- a]  build, then run one executable
+  run [target] [-- a]  build, then run one executable (`--backend native|jvm`)
   test [file..]        build and run test/*.rb against expectations
   trust <name>         always allow <name>'s declared native build steps
                        (one run: --allow-native-build / SPIN_ALLOW_NATIVE_BUILD=1)
@@ -150,6 +150,20 @@ def spinel_bin
     return File.symlink?(cand) ? File.realpath(cand) : cand
   end
   "spinel"  # PATH fallback
+end
+
+# Locate the JVM companion beside an installed compiler or in its checkout.
+def spinel_jvm_bin
+  native_name = spinel_bin
+  native_path = native_name.include?(File::SEPARATOR) ? File.expand_path(native_name) : which(native_name)
+  native_path = File.expand_path(native_name) if native_path == ""
+  companion = File.join(File.dirname(native_path), "spinel-jvm")
+  return companion if File.file?(companion) && File.executable?(companion)
+
+  checkout = File.join(File.expand_path("..", File.dirname(native_path)), "jvm/bin/spinel-jvm")
+  return checkout if File.file?(checkout) && File.executable?(checkout)
+
+  "spinel-jvm"
 end
 
 # the compiler build revision -- the parenthesised word of
@@ -1117,7 +1131,7 @@ end
 # --- manifest ----------------------------------------------------------------
 
 class Project
-  attr_reader :root, :name, :dep_paths, :allocator
+  attr_reader :root, :name, :dep_paths, :allocator, :backend, :jvm_release, :jvm_classpath
 
   def initialize(root)
     @root = root
@@ -1138,6 +1152,10 @@ class Project
     # being built -- and a process has one allocator, which is not a decision
     # a library makes for its dependents.
     @allocator = toml.get("package", "allocator")
+    @backend = toml.get("build", "backend")
+    @backend = "native" if @backend == ""
+    @jvm_release = toml.get("jvm", "release")
+    @jvm_release = "17" if @jvm_release == ""
     # per-dependency feature enablement from THIS manifest's [dependencies]
     # inline specs (dep = { ..., features = ["cuda"] }); root-level only --
     # transitive feature unification is out of scope
@@ -1159,6 +1177,20 @@ class Project
       d = File.directory?(vd) ? vd : f[1]
       @dep_paths.push(d)
       @dep_srcs += "\n" + f[0] + "\t" + d + "\t" + f[2]
+    end
+    @jvm_classpath = []
+    @dep_srcs.split("\n").each do |source|
+      fields = source.split("\t")
+      manifest = File.join(fields[1], "spin.toml")
+      next unless File.exist?(manifest)
+      package_toml = TomlDoc.parse(File.read(manifest))
+      ["jars", "class_dirs"].each do |key|
+        package_toml.get_array("jvm", key).split("\n").each do |entry|
+          next if entry == ""
+          path = File.expand_path(entry, fields[1])
+          @jvm_classpath.push(path) unless @jvm_classpath.include?(path)
+        end
+      end
     end
   end
 
@@ -1310,6 +1342,86 @@ def spin_flags(prj)
   # not an object the earlier ones resolve symbols against.
   f += " --link -l" + prj.allocator if prj.allocator != "" && prj.allocator != "system"
   f
+end
+
+# Build JVM compiler flags from the require gate, target release, feature roots, and Java classpath.
+def jvm_flags(project)
+  flags = "--require-gate --release #{project.jvm_release}"
+  project.dep_paths.each { |dependency_root| flags += " -I #{dependency_root}" }
+  flags += " -I #{project.root}"
+  project.jvm_classpath.each do |path|
+    spin_die("JVM classpath entry does not exist: #{path}") unless File.exist?(path)
+    flags += " --class-path-entry #{path}"
+  end
+  flags
+end
+
+# Compile selected project executables into JARs under build/jvm.
+def cmd_build_jvm(project, targets)
+  executables = project.bins
+  spin_die("no bin/*.rb executables to build (a library is exercised via tests)") if executables.empty?
+  targets = executables if targets.empty?
+  output_directory = File.join(project.root, "build/jvm")
+  mkdir_p_path(output_directory)
+  targets.each do |target|
+    spin_die("no such executable: bin/#{target}.rb") unless executables.include?(target)
+    output = File.join(output_directory, "#{target}.jar")
+    puts "build #{target} (jvm)"
+    command = "#{spinel_jvm_bin} #{jvm_flags(project)} #{File.join(project.root, "bin/#{target}.rb")} " \
+              "--spinel #{spinel_bin} -o #{output}"
+    spin_die("JVM build failed: #{target}") unless run_command(command)
+  end
+end
+
+# Build one executable and run its main class with the resolved project classpath.
+# Arguments after -- belong to the application rather than spin's target selection.
+def cmd_run_jvm(project, arguments)
+  target = ""
+  run_arguments = []
+  seen_separator = false
+  arguments.each do |argument|
+    if argument == "--"
+      seen_separator = true
+    elsif seen_separator
+      run_arguments.push(argument)
+    elsif target == ""
+      target = argument
+    end
+  end
+  executables = project.bins
+  if target == ""
+    spin_die("no executables in bin/") if executables.empty?
+    spin_die("multiple executables (#{executables.join(", ")}): spin run <name>") if executables.length > 1
+    target = executables[0]
+  end
+  cmd_build_jvm(project, [target])
+  entries = [File.join(project.root, "build/jvm", "#{target}.jar")] + project.jvm_classpath
+  command = "java -cp #{entries.join(File::PATH_SEPARATOR)} org.spinel.generated.SpinelMain"
+  run_arguments.each { |argument| command += " #{argument}" }
+  exit(run_command(command) ? 0 : 1)
+end
+
+# Stop interpreting compiler options at the application's argument separator.
+def extract_backend(arguments, default_backend)
+  backend = default_backend
+  result = []
+  index = 0
+  after_separator = false
+  while index < arguments.length
+    argument = arguments[index]
+    if argument == "--"
+      after_separator = true
+      result.push(argument)
+    elsif !after_separator && argument == "--backend"
+      index += 1
+      backend = arguments[index].to_s
+      spin_die("--backend requires native or jvm") unless %w[native jvm].include?(backend)
+    else
+      result.push(argument)
+    end
+    index += 1
+  end
+  [backend, result]
 end
 
 def compile_cmd(prj, entry, out, extra)
@@ -2430,16 +2542,23 @@ when "flags"
   # rebuilds them and leaves bin/spinel untouched.
   root = find_root(Dir.pwd)
   spin_die("no spin.toml found") if root == ""
+  project = Project.new(root)
+  backend, rest = extract_backend(rest, project.backend)
   if rest.include?("--deps")
-    out = spinel_bin
-    dir = File.expand_path("..", File.expand_path("..", spinel_bin))
-    ["lib/libspinel_rt.a", "lib/libspinel_rt_mt.a"].each do |rel|
-      p2 = File.join(dir, rel)
-      out += " " + p2 if File.exist?(p2)
+    if backend == "jvm"
+      out = spinel_jvm_bin + " " + spinel_bin
+      project.jvm_classpath.each { |entry| out += " " + entry }
+    else
+      out = spinel_bin
+      dir = File.expand_path("..", File.expand_path("..", spinel_bin))
+      ["lib/libspinel_rt.a", "lib/libspinel_rt_mt.a"].each do |rel|
+        p2 = File.join(dir, rel)
+        out += " " + p2 if File.exist?(p2)
+      end
     end
     puts out
   else
-    puts spin_flags(Project.new(root))
+    puts(backend == "jvm" ? jvm_flags(project) : spin_flags(project))
   end
 when "pack"
   root = find_root(Dir.pwd)
@@ -2524,6 +2643,22 @@ when "build", "run", "test", "clean"
     rest = spin_args.reject { |a| a == "--debug" || a == "-g" } + tail
   end
   prj = Project.new(root)
+  backend, rest = extract_backend(rest, prj.backend)
+  if backend == "jvm"
+    case cmd
+    when "build"
+      spin_die("JVM build does not accept native compiler flags after --") if rest.include?("--")
+      cmd_build_jvm(prj, rest)
+    when "run"
+      cmd_run_jvm(prj, rest)
+    when "test"
+      spin_die("spin test --backend jvm is not implemented yet")
+    when "clean"
+      run_command("rm -rf #{File.join(prj.root, 'build')}")
+      puts "cleaned"
+    end
+    exit 0
+  end
   case cmd
   when "build"
     extra = ""

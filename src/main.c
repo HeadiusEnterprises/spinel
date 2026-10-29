@@ -279,6 +279,7 @@ static void usage(void) {
     "  --emit-rbs  Dump inferred type signatures as RBS (-> app.rbs), no binary\n"
     "  --emit-types Dump per-position inferred types + diagnostics as JSON\n"
     "  --emit-symbol-map  Dump emitted-symbol -> Ruby-name map as JSON, no binary\n"
+    "  --emit-backend-ir  Dump versioned analyzed IR for alternate backends\n"
     "  -S          Print C to stdout\n"
     "  -E          Run the compiled binary; leftover args become its ARGV\n"
     "  -O LEVEL    Optimization level (default: 2)\n"
@@ -310,7 +311,7 @@ int main(int argc, char **argv) {
   const char *rbs_dir = NULL;
   int c_only = 0, stdout_mode = 0, run_mode = 0, dump_ast = 0;
   int print_build = 0;   /* --print-build: emit the build ingredients, run nothing */
-  int emit_rbs = 0, emit_types = 0, emit_symbol_map = 0;
+  int emit_rbs = 0, emit_types = 0, emit_symbol_map = 0, emit_backend_ir = 0;
   int debug = 0, line_map = 1, want_g = 0, profile = 0;
   /* Accumulated -e source and the program ARGV after the -E boundary. */
   Str eval_src = {0};
@@ -375,6 +376,7 @@ int main(int argc, char **argv) {
     else if (sp_streq(a, "--emit-rbs"))    { emit_rbs = 1; i++; }
     else if (sp_streq(a, "--emit-types"))  { emit_types = 1; i++; }
     else if (sp_streq(a, "--emit-symbol-map")) { emit_symbol_map = 1; i++; }
+    else if (sp_streq(a, "--emit-backend-ir")) { emit_backend_ir = 1; i++; }
     else if (sp_streq(a, "--dump-ast"))    { dump_ast = 1; i++; }
     else if (sp_streq(a, "-h") || sp_streq(a, "--help")) { usage(); return 0; }
     /* The C compiler is half of what a spinel build is, so name it too: a bug
@@ -576,6 +578,12 @@ int main(int argc, char **argv) {
     set_env("SPINEL_DEBUG", "1");
     set_env("SPINEL_EMIT_SYMBOL_MAP", emit_out);
   }
+  else if (emit_backend_ir) {
+    snprintf(emit_out, sizeof emit_out, "%s", output ? output : basename);
+    if (!output) { strncat(emit_out, ".spir.json", sizeof emit_out - strlen(emit_out) - 1); }
+    set_env("SPINEL_DEBUG", "1");
+    set_env("SPINEL_EMIT_BACKEND_IR", emit_out);
+  }
   if (profile) {
     /* --profile also writes the symbol map next to the binary (offline
        symbolization input for perf tooling); codegen falls through to the
@@ -616,7 +624,7 @@ int main(int argc, char **argv) {
   if (!csrc) { fprintf(stderr, "spinel: codegen failed\n"); return 1; }
 
   /* Emit modes already wrote their file; codegen returned empty C. */
-  if (emit_rbs || emit_types || emit_symbol_map) {
+  if (emit_rbs || emit_types || emit_symbol_map || emit_backend_ir) {
     fprintf(stderr, "Wrote %s\n", emit_out);
     free(csrc);
     return 0;
